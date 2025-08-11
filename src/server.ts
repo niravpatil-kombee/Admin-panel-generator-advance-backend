@@ -1,27 +1,53 @@
-    // src/server.ts
-
-import express from 'express';
-import { createBackendStructure } from './generator/createBackend';
+import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
+import cors from 'cors';
+import path from 'path';
+
+import { createBackendStructure } from './generator/createBackend';
 import { generateLoginSystem } from './generator/generateLoginSystem';
+import { parseExcelFile } from './generator/excelParser';
+import { upload } from './middleware/uploads';
+import { generateModelsFromExcel } from './generator/generateModel';
 
 dotenv.config();
 const app = express();
-app.use(express.json());
 
-app.post('/generate-backend', async(req, res) => {
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.post('/generate-backend', upload.single('file'), async (req: Request, res: Response) => {
   try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No Excel schema file uploaded' });
+    }
+
+    // Step 1: Create base backend structure
     await createBackendStructure();
+
+    // Step 2: Generate login system
     await generateLoginSystem();
-    
-    res.status(200).json({ message: 'Backend structure and login system generated successfully!' });
+
+    // Step 3: Parse Excel schema
+    const models = await parseExcelFile(req.file.path);
+
+    // Step 4: Output directory for models
+    const outputDir = path.join(__dirname, '../generated-backend/src/models');
+
+    // Step 5: Generate models
+    await generateModelsFromExcel(outputDir,models);
+
+    res.status(200).json({
+      message: '✅ Backend structure, login system, and models created successfully!',
+      models
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Error creating backend structure' });
+    console.error('❌ Error creating backend:', err);
+    res.status(500).json({ message: 'Error creating backend structure', error: err });
   }
 });
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
