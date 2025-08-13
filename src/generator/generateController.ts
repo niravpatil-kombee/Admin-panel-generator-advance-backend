@@ -57,6 +57,21 @@ export const create${className} = async (req: Request, res: Response) => {
     await item.save();
     res.status(201).json({ success: true, data: item });
   } catch (err: any) {
+     if (err.code === 11000) {
+    const field = Object.keys(err.keyValue)[0];
+    return res.status(400).json({
+      success: false,
+      message: \`\${field} already exists\`
+    });
+  }
+
+  if (err.name === "ValidationError") {
+    const errors: Record<string, string> = {};
+    for (let field in err.errors) {
+      errors[field] = err.errors[field].message;
+    }
+    return res.status(400).json({ success: false, errors });
+  }
     res.status(400).json({ success: false, message: err.message });
   }
 };
@@ -105,26 +120,57 @@ export const get${className}ById = async (req: Request, res: Response) => {
 export const update${className} = async (req: Request, res: Response) => {
   try {
     const payload = req.body;
+
+    // 1. Handle file field if present
     ${
       hasFileField
         ? `
     if (req.file) {
       payload.filePath = '/uploads/${className}/' + req.file.filename;
-      const old = await ${varName}.findById(req.params.id);
-      if (old?.filePath) {
-        const oldPath = path.join(__dirname, '../../', old.filePath);
+      const oldDoc = await ${varName}.findById(req.params.id);
+      if (oldDoc?.filePath) {
+        const oldPath = path.join(__dirname, '../../', oldDoc.filePath);
         if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
       }
     }`
         : ""
     }
-    const doc = await ${varName}.findByIdAndUpdate(req.params.id, payload, { new: true });
-    if (!doc) return res.status(404).json({ success: false, message: '${className} not found' });
-    res.status(200).json({ success: true, data: doc });
+
+    // 2. Fetch existing doc
+    const existingDoc = await ${varName}.findById(req.params.id);
+    if (!existingDoc) {
+      return res.status(404).json({ success: false, message: '${className} not found' });
+    }
+
+    // 3. Check for unique fields before update (skip if unchanged)
+    const uniqueFields = ${JSON.stringify(
+      model.fields.filter((f) => f.unique).map((f) => f.name)
+    )};
+    
+    for (const field of uniqueFields) {
+      if (payload[field] && payload[field] !== existingDoc[field]) {
+        const duplicate = await ${varName}.findOne({ [field]: payload[field] });
+        if (duplicate) {
+          return res.status(400).json({ success: false, message: \`\${field} already exists\` });
+        }
+      }
+    }
+
+    // 4. Update document
+    const updatedDoc = await ${varName}.findByIdAndUpdate(
+      req.params.id,
+      payload,
+      { new: true, runValidators: true }
+    );
+
+    res.status(200).json({ success: true, data: updatedDoc });
+
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
 };
+
+
 
 // Delete
 export const delete${className} = async (req: Request, res: Response) => {
