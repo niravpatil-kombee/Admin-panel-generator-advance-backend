@@ -1,56 +1,57 @@
-import fs from 'fs';
-import path from 'path';
+import fs from "fs";
+import path from "path";
 
-const BASE_DIR = path.join(__dirname, '../../generated-backend');
-const SRC_DIR = path.join(BASE_DIR, 'src');
+const BASE_DIR = path.join(__dirname, "../../generated-backend");
+const SRC_DIR = path.join(BASE_DIR, "src");
 
-const folders = ['controllers', 'models', 'routes', 'middlewares', 'utils', 'config'];
+const folders = [
+  "controllers",
+  "models",
+  "routes",
+  "middlewares",
+  "utils",
+  "config",
+];
 
 const files = {
-  'package.json': `{
-  "name": "backend",
+  "package.json": `{
+  "name": "generated-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "start": "node dist/server.js",
-    "dev": "ts-node-dev --respawn src/server.ts",
-    "build": "tsc"
-  },
-  "keywords": [],
-  "author": "",
+  "description": "Auto-generated backend",
   "license": "ISC",
+  "author": "rahul kadiwala",
   "type": "commonjs",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "ts-node-dev --respawn src/server.ts"
+  },
   "dependencies": {
-    "bcryptjs": "^3.0.2",
-    "cookie-parser": "^1.4.7",
-    "crypto": "^1.0.1",
-    "dotenv": "^17.2.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^5.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.17.0",
-    "nodemailer": "^7.0.5",
-    "nodemon": "^3.1.10"
+    "fs": "^0.0.1-security",
+    "mongoose": "^8.17.1",
+    "multer": "^2.0.2",
+    "path": "^0.12.7"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/cookie-parser": "^1.4.9",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
-    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.0.0",
     "@types/node": "^24.2.0",
-    "@types/nodemailer": "^6.4.17",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.2"
   }
 }
+
 `,
-  '.env': `PORT=5000
+  ".env": `PORT=5000
 MONGO_URI=mongodb://localhost:27017/authSystem
 JWT_SECRET=R@h6%4$uL90$
 JWT_REFRESH=R$y%to09&*bGt
 EMAIL=onoffcollection503@gmail.com
 EMAIL_PASSWORD=lhyoezzwbjjevbbn`,
-  'tsconfig.json': `{
+  "tsconfig.json": `{
   "compilerOptions": {
     "target": "ES6",
     "module": "CommonJS",
@@ -66,14 +67,27 @@ EMAIL_PASSWORD=lhyoezzwbjjevbbn`,
 
 // server.ts content inside /src
 const serverFile = {
-  'server.ts': `// src/server.ts
+  "server.ts": `// src/server.ts
 
 import express from 'express';
+import path from "path";
+import fs from "fs";
 import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+const routesPath = path.join(__dirname, "./routes");
+fs.readdirSync(routesPath).forEach((file) => {
+  if (file.endsWith(".routes.ts") || file.endsWith(".routes.js")) {
+    const routeModule = require(path.join(routesPath, file));
+    if (routeModule.default) {
+      app.use(routeModule.default);
+      console.log(\`✅ Route loaded: \${file}\`);
+    }
+  }
+});
 
 app.listen(process.env.PORT || 4000, () => {
   console.log(\`Server running on port \${process.env.PORT || 4000}\`);
@@ -92,7 +106,7 @@ export const createBackendStructure = () => {
   }
 
   // Create subfolders inside src/
-  folders.forEach(folder => {
+  folders.forEach((folder) => {
     const folderPath = path.join(SRC_DIR, folder);
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath);

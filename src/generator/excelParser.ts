@@ -1,8 +1,8 @@
-import xlsx from 'xlsx';
+import ExcelJS from "exceljs";
 
 export interface ParsedField {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'Date' | 'ObjectId';
+  type: "string" | "number" | "boolean" | "Date" | "ObjectId";
   required: boolean;
   unique: boolean;
   isIndex: boolean;
@@ -28,102 +28,126 @@ export interface ParsedModel {
   fields: ParsedField[];
 }
 
-const sqlToMongooseType = (type: string): ParsedField['type'] => {
+const sqlToMongooseType = (type: string): ParsedField["type"] => {
   const lowered = type.toLowerCase();
-  if (['int', 'integer', 'bigint', 'smallint', 'decimal', 'float', 'double'].includes(lowered)) return 'number';
-  if (['varchar', 'text', 'string', 'char', 'longtext'].includes(lowered)) return 'string';
-  if (['bool', 'boolean'].includes(lowered)) return 'boolean';
-  if (['datetime', 'timestamp', 'date'].includes(lowered)) return 'Date';
-  if (['objectid', 'foreignkey'].includes(lowered)) return 'ObjectId';
+  if (
+    [
+      "int",
+      "integer",
+      "bigint",
+      "smallint",
+      "decimal",
+      "float",
+      "double",
+    ].includes(lowered)
+  )
+    return "number";
+  if (["varchar", "text", "string", "char", "longtext"].includes(lowered))
+    return "string";
+  if (["bool", "boolean"].includes(lowered)) return "boolean";
+  if (["datetime", "timestamp", "date"].includes(lowered)) return "Date";
+  if (["objectid", "foreignkey"].includes(lowered)) return "ObjectId";
   console.warn(`Unknown SQL type: ${type}, defaulting to string`);
-  return 'string';
+  return "string";
 };
 
-export const parseExcelFile = (filePath: string): ParsedModel[] => {
-  const workbook = xlsx.readFile(filePath);
+/**
+ * Memory-efficient streaming Excel parser
+ */
+export const parseExcelFile = async (
+  filePath: string
+): Promise<ParsedModel[]> => {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+
   const models: ParsedModel[] = [];
 
-  workbook.SheetNames.forEach((sheetName) => {
-    const worksheet = workbook.Sheets[sheetName];
-    const rows = xlsx.utils.sheet_to_json<any[]>(worksheet, { header: 1, defval: '' });
+  for (const sheet of workbook.worksheets) {
+    // Read first two rows for meta info
+    const tableName =
+      sheet.getRow(1).getCell(2).value?.toString().trim() || sheet.name;
 
-    if (rows.length < 2) {
-      console.warn(`⚠ Sheet "${sheetName}" skipped: not enough rows`);
-      return;
-    }
-
-    const headers = rows[1];
-    const dataRows = rows.slice(2);
-
-    const json = dataRows.map((row) => {
-      const obj: Record<string, any> = {};
-      headers.forEach((key, index) => {
-        obj[key?.toString().trim().toLowerCase()] = row[index];
-      });
-      return obj;
+    // Headers are in row 2
+    const headers: string[] = [];
+    sheet.getRow(2).eachCell((cell, colNumber) => {
+      headers[colNumber - 1] =
+        cell.value?.toString().trim().toLowerCase() || "";
     });
 
-    const tableName = rows[0][1]?.toString().trim() || sheetName;
+    const fields: ParsedField[] = [];
 
-    const fields: ParsedField[] = json
-      .filter((row) => !!row['column'])
-      .map((row) => {
-        const comments = row['comments']?.toString().trim() || undefined;
-        let enumValues: string[] | undefined;
-        let defaultValue = row['default_value'] || undefined;
+    // Start from row 3 for data
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber <= 2) return; // skip first two rows
 
-        // Detect enum mapping inside comments like "Y => Active, N => Inactive"
-        if (comments && comments.includes('=>')) {
-          const mapping: Record<string, string> = {};
-          comments.split(',').forEach((part: string) => {
-            const [key, val] = part.split('=>').map(s => s.trim().replace(/^'|'$/g, ''));
-            if (key && val) mapping[key] = val;
-          });
-
-          enumValues = Object.values(mapping);
-
-          // Map default key to the label if found
-          if (defaultValue && mapping[defaultValue] !== undefined) {
-            defaultValue = mapping[defaultValue];
-          }
-        }
-
-        // If enum is explicitly listed in Excel without mapping
-        if (!enumValues && row['enum_values']) {
-          enumValues = row['enum_values']
-            .toString()
-            .split(',')
-            .map((v: string) => v.trim());
-        }
-
-        return {
-          name: row['column'],
-          type: sqlToMongooseType(row['type']),
-          required: row['is_null']?.toString().toLowerCase() === 'n',
-          unique: row['is_unique']?.toString().toLowerCase() === 'y',
-          isIndex: row['is_index']?.toString().toLowerCase() === 'y',
-          isPrimary: row['constraints']?.toString().toLowerCase().includes('pk'),
-          isForeign: row['constraints']?.toString().toLowerCase().includes('fk'),
-          foreignTable: row['foreign_table'] || undefined,
-          foreignKey: row['foreign_key'] || undefined,
-          isDependent: row['is_dependent']?.toString().toLowerCase() === 'y',
-          dependentOn: row['dependent_on'] || undefined,
-          isParent: row['is_parent']?.toString().toLowerCase() === 'y',
-          childTable: row['child_table'] || undefined,
-          default: defaultValue,
-          ui: row['ui_component'] || undefined,
-          validation: row['validation_rule'] || undefined,
-          sortable: row['sortable']?.toString().toLowerCase() === 'y',
-          faker: row['faker_value'] || undefined,
-          comments,
-          enumValues
-        };
+      const rowData: Record<string, any> = {};
+      row.eachCell((cell, colNumber) => {
+        rowData[headers[colNumber - 1]] = cell.value;
       });
 
-    models.push({ tableName, fields });
-  });
+      if (!rowData["column"]) return; // skip empty rows
+
+      const comments = rowData["comments"]?.toString().trim() || undefined;
+      let enumValues: string[] | undefined;
+      let defaultValue = rowData["default_value"] || undefined;
+
+      // Detect enum mapping in comments
+      if (comments && comments.includes("=>")) {
+        const mapping: Record<string, string> = {};
+        comments.split(",").forEach((part: string) => {
+          const [key, val] = part
+            .split("=>")
+            .map((s) => s.trim().replace(/^'|'$/g, ""));
+          if (key && val) mapping[key] = val;
+        });
+        enumValues = Object.values(mapping);
+        if (defaultValue && mapping[defaultValue] !== undefined) {
+          defaultValue = mapping[defaultValue];
+        }
+      }
+
+      // Enum explicitly listed
+      if (!enumValues && rowData["enum_values"]) {
+        enumValues = rowData["enum_values"]
+          .toString()
+          .split(",")
+          .map((v: string) => v.trim());
+      }
+
+      fields.push({
+        name: rowData["column"],
+        type: sqlToMongooseType(rowData["type"]),
+        required: rowData["is_null"]?.toString().toLowerCase() === "n",
+        unique: rowData["is_unique"]?.toString().toLowerCase() === "y",
+        isIndex: rowData["is_index"]?.toString().toLowerCase() === "y",
+        isPrimary: rowData["constraints"]
+          ?.toString()
+          .toLowerCase()
+          .includes("pk"),
+        isForeign: rowData["constraints"]
+          ?.toString()
+          .toLowerCase()
+          .includes("fk"),
+        foreignTable: rowData["foreign_table"] || undefined,
+        foreignKey: rowData["foreign_key"] || undefined,
+        isDependent: rowData["is_dependent"]?.toString().toLowerCase() === "y",
+        dependentOn: rowData["dependent_on"] || undefined,
+        isParent: rowData["is_parent"]?.toString().toLowerCase() === "y",
+        childTable: rowData["child_table"] || undefined,
+        default: defaultValue,
+        ui: rowData["ui_component"] || undefined,
+        validation: rowData["validation_rule"] || undefined,
+        sortable: rowData["sortable"]?.toString().toLowerCase() === "y",
+        faker: rowData["faker_value"] || undefined,
+        comments,
+        enumValues,
+      });
+    });
+
+    if (fields.length) {
+      models.push({ tableName, fields });
+    }
+  }
 
   return models;
 };
-
-
