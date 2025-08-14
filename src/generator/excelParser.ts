@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { logError, logTest } from "./backendGeneratorLogs";
 
 export interface ParsedField {
   name: string;
@@ -47,7 +48,7 @@ const sqlToMongooseType = (type: string): ParsedField["type"] => {
   if (["bool", "boolean"].includes(lowered)) return "boolean";
   if (["datetime", "timestamp", "date"].includes(lowered)) return "Date";
   if (["objectid", "foreignkey"].includes(lowered)) return "ObjectId";
-  console.warn(`Unknown SQL type: ${type}, defaulting to string`);
+  logError(`Unknown SQL type: ${type}, defaulting to string`);
   return "string";
 };
 
@@ -145,6 +146,7 @@ export const parseExcelFile = async (
     });
 
     if (fields.length) {
+      logTest(fields);
       models.push({ tableName, fields });
     }
   }

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { logSuccess } from "./backendGeneratorLogs";
 import { ParsedField, ParsedModel } from "./excelParser";
 
 const typeMapTS: Record<string, string> = {
@@ -125,7 +126,7 @@ export const ${className} = mongoose.model<I${className}>('${className}', ${clas
 
   const filePath = path.join(BASE_PATH, `${className}.model.ts`);
   fs.writeFileSync(filePath, content.trim());
-  console.log(`✅ Model generated: ${filePath}`);
+  logSuccess(`✅ Model generated: ${filePath}`);
 };
 
 export const generateModelsFromExcel = (_: string, models: ParsedModel[]) => {

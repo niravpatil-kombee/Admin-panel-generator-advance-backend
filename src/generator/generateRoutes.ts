@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { logSuccess } from "./backendGeneratorLogs";
 import { ParsedModel } from "./excelParser";
 
 const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
@@ -59,7 +60,7 @@ export default router;
 
   const filePath = path.join(BASE_PATH, `${className}.routes.ts`);
   fs.writeFileSync(filePath, content.trim());
-  console.log(`✅ Routes generated: ${filePath}`);
+  logSuccess(`✅ Routes generated: ${filePath}`);
 };
 
 export const generateRoutesFromExcel = (_: string, models: ParsedModel[]) => {

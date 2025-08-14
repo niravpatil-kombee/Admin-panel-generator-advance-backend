@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { logSuccess, logTest } from "./backendGeneratorLogs";
 
 const BASE_DIR = path.join(__dirname, "../../generated-backend");
 const SRC_DIR = path.join(BASE_DIR, "src");
@@ -129,5 +130,6 @@ export const createBackendStructure = () => {
     }
   });
 
-  console.log("✅ Folder and file structure created successfully");
+  logSuccess("✅ Folder and file structure created successfully");
+  logTest("hello");
 };

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { logSuccess } from "./backendGeneratorLogs";
 import { ParsedModel } from "./excelParser";
 
 const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
@@ -44,6 +45,12 @@ export const ${className}Upload = multer({ storage });
 ${imports.join("\n")}
 ${uploadCode}
 
+// Helper: get all schema unique fields
+const getUniqueFields = () =>
+  Object.keys(${varName}.schema.paths).filter(
+    key => ${varName}.schema.paths[key].options?.unique
+  );
+
 // Create
 export const create${className} = async (req: Request, res: Response) => {
   try {
@@ -53,25 +60,38 @@ export const create${className} = async (req: Request, res: Response) => {
         ? `if (req.file) payload.filePath = '/uploads/${className}/' + req.file.filename;`
         : ""
     }
+
+    // Unique field check (case-insensitive + trim)
+    for (const field of getUniqueFields()) {
+      if (payload[field]) {
+        const value = String(payload[field]).trim().toLowerCase();
+        const exists = await ${varName}.findOne({ [field]: { $regex: \`^\${value}$\`, $options: 'i' } });
+        if (exists) {
+          return res.status(400).json({ success: false, message: \`\${field} already exists\` });
+        }
+      }
+    }
+
     const item = new ${varName}(payload);
     await item.save();
     res.status(201).json({ success: true, data: item });
   } catch (err: any) {
-     if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    return res.status(400).json({
-      success: false,
-      message: \`\${field} already exists\`
-    });
-  }
-
-  if (err.name === "ValidationError") {
-    const errors: Record<string, string> = {};
-    for (let field in err.errors) {
-      errors[field] = err.errors[field].message;
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyValue)[0];
+      return res.status(400).json({
+        success: false,
+        message: \`\${field} already exists\`
+      });
     }
-    return res.status(400).json({ success: false, errors });
-  }
+
+    if (err.name === "ValidationError") {
+      const errors: Record<string, string> = {};
+      for (let field in err.errors) {
+        errors[field] = err.errors[field].message;
+      }
+      return res.status(400).json({ success: false, errors });
+    }
+
     res.status(400).json({ success: false, message: err.message });
   }
 };
@@ -121,7 +141,6 @@ export const update${className} = async (req: Request, res: Response) => {
   try {
     const payload = req.body;
 
-    // 1. Handle file field if present
     ${
       hasFileField
         ? `
@@ -136,27 +155,27 @@ export const update${className} = async (req: Request, res: Response) => {
         : ""
     }
 
-    // 2. Fetch existing doc
     const existingDoc = await ${varName}.findById(req.params.id);
     if (!existingDoc) {
       return res.status(404).json({ success: false, message: '${className} not found' });
     }
 
-    // 3. Check for unique fields before update (skip if unchanged)
-    const uniqueFields = ${JSON.stringify(
-      model.fields.filter((f) => f.unique).map((f) => f.name)
-    )};
-    
-    for (const field of uniqueFields) {
-      if (payload[field] && payload[field] !== existingDoc[field]) {
-        const duplicate = await ${varName}.findOne({ [field]: payload[field] });
-        if (duplicate) {
-          return res.status(400).json({ success: false, message: \`\${field} already exists\` });
+    const existingDocObj = existingDoc.toObject() as Record<string, any>;
+
+    // Unique field check (case-insensitive + trim, skip if unchanged)
+    for (const field of getUniqueFields()) {
+      if (payload[field]) {
+        const newValue = String(payload[field]).trim().toLowerCase();
+        const oldValue = String(existingDocObj[field] ?? "").trim().toLowerCase();
+        if (newValue !== oldValue) {
+          const duplicate = await ${varName}.findOne({ [field]: { $regex: \`^\${newValue}$\`, $options: 'i' } });
+          if (duplicate) {
+            return res.status(400).json({ success: false, message: \`\${field} already exists\` });
+          }
         }
       }
     }
 
-    // 4. Update document
     const updatedDoc = await ${varName}.findByIdAndUpdate(
       req.params.id,
       payload,
@@ -166,11 +185,16 @@ export const update${className} = async (req: Request, res: Response) => {
     res.status(200).json({ success: true, data: updatedDoc });
 
   } catch (err: any) {
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyValue)[0];
+      return res.status(400).json({
+        success: false,
+        message: \`\${field} already exists\`
+      });
+    }
     res.status(400).json({ success: false, message: err.message });
   }
 };
-
-
 
 // Delete
 export const delete${className} = async (req: Request, res: Response) => {
@@ -195,7 +219,7 @@ export const delete${className} = async (req: Request, res: Response) => {
 
   const filePath = path.join(outputDir, `${className}.controller.ts`);
   fs.writeFileSync(filePath, content.trim());
-  console.log(`✅ Controller generated: ${filePath}`);
+  logSuccess(`✅ Controller generated: ${filePath}`);
 };
 
 export const generateControllersFromExcel = (
