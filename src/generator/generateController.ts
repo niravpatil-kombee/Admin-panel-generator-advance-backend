@@ -1,9 +1,59 @@
 import fs from "fs";
 import path from "path";
 import { logSuccess } from "./backendGeneratorLogs";
-import { ParsedModel } from "./excelParser";
+import { ParsedField, ParsedModel } from "./excelParser";
 
 const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
+
+const parseValidationToZod = (field: ParsedField) => {
+  let zodChain = "";
+
+  // Base type
+  switch (field.type) {
+    case "string":
+      zodChain = "z.string()";
+      break;
+    case "number":
+      zodChain = "z.number()";
+      break;
+    case "boolean":
+      zodChain = "z.boolean()";
+      break;
+    case "Date":
+      zodChain = `z.string().transform(val => new Date(val))`;
+      break;
+    default:
+      zodChain = "z.any()";
+  }
+
+  // Validation rules from Excel
+  if (field.validation) {
+    const rules = String(field.validation)
+      .split("|")
+      .map((r) => r.trim());
+
+    rules.forEach((rule) => {
+      if (rule === "required") {
+        if (field.type === "string") {
+          zodChain += `.min(1, { message: "${field.name} is required" })`;
+        } else {
+          zodChain += `.refine(val => val !== undefined && val !== null, { message: "${field.name} is required" })`;
+        }
+      }
+      if (rule.startsWith("max:") && field.type === "string") {
+        const val = parseInt(rule.split(":")[1], 10);
+        zodChain += `.max(${val}, { message: "${field.name} must be at most ${val}" })`;
+      }
+      if (rule.startsWith("min:") && field.type === "string") {
+        const val = parseInt(rule.split(":")[1], 10);
+        zodChain += `.min(${val}, { message: "${field.name} must be at least ${val}" })`;
+      }
+      // mimes handled separately (multer), skip here
+    });
+  }
+
+  return zodChain;
+};
 
 const generateControllerFile = (outputDir: string, model: ParsedModel) => {
   if (!fs.existsSync(outputDir)) {
@@ -16,13 +66,17 @@ const generateControllerFile = (outputDir: string, model: ParsedModel) => {
     (f.ui || "").toLowerCase().includes("file")
   );
 
-  const imports = [`import { Request, Response } from 'express';`];
+  const imports = [
+    `import { Request, Response } from 'express';`,
+    `import { ${className} } from '../models/${className}.model';`,
+    `import { ${className}Schema } from '../validations/${className}.validation';`,
+  ];
+
   if (hasFileField) {
     imports.push(`import multer from 'multer';`);
     imports.push(`import path from 'path';`);
     imports.push(`import fs from 'fs';`);
   }
-  imports.push(`import { ${className} } from '../models/${className}.model';`);
 
   let uploadCode = "";
   if (hasFileField) {
@@ -54,14 +108,18 @@ const getUniqueFields = () =>
 // Create
 export const create${className} = async (req: Request, res: Response) => {
   try {
-    const payload = req.body;
+    const parsed = ${className}Schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, errors: parsed.error.format() });
+    }
+    const payload = parsed.data;
     ${
       hasFileField
         ? `if (req.file) payload.filePath = '/uploads/${className}/' + req.file.filename;`
         : ""
     }
 
-    // Unique field check (case-insensitive + trim)
+    // Unique check
     for (const field of getUniqueFields()) {
       if (payload[field]) {
         const value = String(payload[field]).trim().toLowerCase();
@@ -76,22 +134,6 @@ export const create${className} = async (req: Request, res: Response) => {
     await item.save();
     res.status(201).json({ success: true, data: item });
   } catch (err: any) {
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyValue)[0];
-      return res.status(400).json({
-        success: false,
-        message: \`\${field} already exists\`
-      });
-    }
-
-    if (err.name === "ValidationError") {
-      const errors: Record<string, string> = {};
-      for (let field in err.errors) {
-        errors[field] = err.errors[field].message;
-      }
-      return res.status(400).json({ success: false, errors });
-    }
-
     res.status(400).json({ success: false, message: err.message });
   }
 };
@@ -139,7 +181,11 @@ export const get${className}ById = async (req: Request, res: Response) => {
 // Update
 export const update${className} = async (req: Request, res: Response) => {
   try {
-    const payload = req.body;
+    const parsed = ${className}Schema.partial().safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, errors: parsed.error.format() });
+    }
+    const payload = parsed.data;
 
     ${
       hasFileField
@@ -162,7 +208,7 @@ export const update${className} = async (req: Request, res: Response) => {
 
     const existingDocObj = existingDoc.toObject() as Record<string, any>;
 
-    // Unique field check (case-insensitive + trim, skip if unchanged)
+    // Unique check for updated values
     for (const field of getUniqueFields()) {
       if (payload[field]) {
         const newValue = String(payload[field]).trim().toLowerCase();
@@ -183,15 +229,7 @@ export const update${className} = async (req: Request, res: Response) => {
     );
 
     res.status(200).json({ success: true, data: updatedDoc });
-
   } catch (err: any) {
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyValue)[0];
-      return res.status(400).json({
-        success: false,
-        message: \`\${field} already exists\`
-      });
-    }
     res.status(400).json({ success: false, message: err.message });
   }
 };

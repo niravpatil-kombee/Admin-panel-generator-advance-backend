@@ -33,13 +33,16 @@ const files = {
     "fs": "^0.0.1-security",
     "mongoose": "^8.17.1",
     "multer": "^2.0.2",
-    "path": "^0.12.7"
+    "path": "^0.12.7",
+    "zod": "^3.22.4",
+    "json2csv": "^6.0.0-alpha.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.2.0",
+    "@types/json2csv": "^5.0.7",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.2"
   }
