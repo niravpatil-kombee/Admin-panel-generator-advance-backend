@@ -154,7 +154,10 @@ const generateModelFile = (model: ParsedModel) => {
 import { z } from "zod";
 
 export const ${className}Schema = z.object({
-${model.fields.map(generateZodField).join(",\n")}
+${model.fields
+  .filter((f) => f.name.toLowerCase() !== "id")
+  .map(generateZodField)
+  .join(",\n")}
 });
 `;
 

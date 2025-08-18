@@ -32,20 +32,17 @@ export interface ParsedModel {
 }
 
 // ------------------ Helpers ------------------
-const sqlToMongooseType = (type: string): ParsedField["type"] => {
+const sqlToMongooseType = (
+  type: string,
+  columnName: string
+): ParsedField["type"] => {
   const lowered = type.toLowerCase();
-  if (
-    [
-      "int",
-      "integer",
-      "bigint",
-      "smallint",
-      "decimal",
-      "float",
-      "double",
-    ].includes(lowered)
-  )
+  if (lowered === "int" || lowered === "integer") {
+    if (columnName.toLowerCase().endsWith("_id")) {
+      return "ObjectId";
+    }
     return "number";
+  }
   if (["varchar", "text", "string", "char", "longtext"].includes(lowered))
     return "string";
   if (["bool", "boolean"].includes(lowered)) return "boolean";
@@ -55,31 +52,39 @@ const sqlToMongooseType = (type: string): ParsedField["type"] => {
   return "string";
 };
 
-// Laravel-style rule string → Zod chain
-const mapValidationRulesToZod = (fieldType: string, rules: unknown): string => {
+// ------------------ Zod Rule Mapper ------------------
+const mapValidationRulesToZod = (field: ParsedField): string => {
   let zodChain = "";
 
-  // Base type
-  switch (fieldType) {
-    case "number":
-      zodChain = "z.number()";
-      break;
-    case "boolean":
-      zodChain = "z.boolean()";
-      break;
-    case "Date":
-      zodChain =
-        "z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' })";
-      break;
-    default:
-      zodChain = "z.string()";
+  // Enum check
+  if (Array.isArray(field.enumValues) && field.enumValues.length) {
+    return `z.enum([${field.enumValues.map((v) => `'${v}'`).join(", ")}])`;
   }
 
-  if (!rules) return zodChain;
+  // ObjectId check
+  if (field.isForeign || field.type === "ObjectId") {
+    zodChain = `z.string().regex(/^[0-9a-fA-F]{24}$/, { message: 'Invalid ObjectId' })`;
+  } else {
+    switch (field.type) {
+      case "number":
+        zodChain = "z.number()";
+        break;
+      case "boolean":
+        zodChain = "z.boolean()";
+        break;
+      case "Date":
+        zodChain = `z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' })`;
+        break;
+      default:
+        zodChain = "z.string()";
+    }
+  }
 
-  // Ensure we always have a string to split
-  const rulesStr = typeof rules === "string" ? rules : String(rules || "");
-
+  // Add Laravel-style validations
+  const rulesStr =
+    typeof field.validation === "string"
+      ? field.validation
+      : String(field.validation || "");
   rulesStr.split("|").forEach((rule) => {
     rule = rule.trim();
 
@@ -87,18 +92,23 @@ const mapValidationRulesToZod = (fieldType: string, rules: unknown): string => {
       zodChain += ".nonempty({ message: 'Required' })";
     } else if (rule.startsWith("max:")) {
       const num = rule.split(":")[1];
-      zodChain += `.max(${num}, { message: 'Max length is ${num}' })`;
+      zodChain += `.max(${num}, { message: 'Max is ${num}' })`;
     } else if (rule.startsWith("min:")) {
       const num = rule.split(":")[1];
-      zodChain += `.min(${num}, { message: 'Min length is ${num}' })`;
-    } else if (rule.startsWith("date_format:")) {
-      const format = rule.split(":")[1];
-      zodChain += `.refine(val => /\\d{4}-\\d{2}-\\d{2}/.test(val), { message: 'Date must match format ${format}' })`;
+      zodChain += `.min(${num}, { message: 'Min is ${num}' })`;
     } else if (rule.startsWith("mimes:")) {
       const types = rule.split(":")[1].split(",");
       zodChain += `.refine(file => file && ${JSON.stringify(
         types
       )}.some(t => file.type.includes(t)), { message: 'Invalid file type' })`;
+    } else if (rule.startsWith("date_format:")) {
+      // already handled as Date string above
+    } else if (rule.startsWith("in:")) {
+      const values = rule
+        .split(":")[1]
+        .split(",")
+        .map((v) => `'${v.trim()}'`);
+      zodChain = `z.enum([${values.join(", ")}])`;
     }
   });
 
@@ -163,14 +173,13 @@ export const parseExcelFile = async (
           .map((v: string) => v.trim());
       }
 
-      const fieldType = sqlToMongooseType(rowData["type"]);
-
-      // Always ensure validation rule is string
+      const fieldType = sqlToMongooseType(rowData["type"], rowData["column"]);
       const validationRule = rowData["validation_rule"]
         ? String(rowData["validation_rule"]).trim()
         : undefined;
 
-      fields.push({
+      // Construct field
+      const field: ParsedField = {
         name: rowData["column"],
         type: fieldType,
         required: rowData["is_null"]?.toString().toLowerCase() === "n",
@@ -197,8 +206,13 @@ export const parseExcelFile = async (
         faker: rowData["faker_value"] || undefined,
         comments,
         enumValues,
-        zodValidation: mapValidationRulesToZod(fieldType, validationRule),
-      });
+        zodValidation: "", // placeholder
+      };
+
+      // Assign Zod validation
+      field.zodValidation = mapValidationRulesToZod(field);
+
+      fields.push(field);
     });
 
     if (fields.length) {

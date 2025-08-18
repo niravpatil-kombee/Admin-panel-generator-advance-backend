@@ -4,23 +4,19 @@ import { logSuccess } from "./backendGeneratorLogs";
 import { ParsedField, ParsedModel } from "./excelParser";
 
 const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
-
-// Replace invalid characters in variable names with underscores
 const sanitizeFieldName = (name: string) => name.replace(/[^a-zA-Z0-9_]/g, "_");
 
-// Generate validation object for each model
 const generateValidationObject = (fields: ParsedField[]) => {
   const obj: Record<string, string> = {};
   fields.forEach((field) => {
     if (field.name.toLowerCase() === "id") return;
-    if (field.validation) {
-      obj[sanitizeFieldName(field.name)] = String(field.validation).trim();
+    if (field.zodValidation) {
+      obj[sanitizeFieldName(field.name)] = field.zodValidation;
     }
   });
   return obj;
 };
 
-// Main function
 export const generateValidationsFromExcel = (
   _: string,
   models: ParsedModel[]
@@ -35,16 +31,18 @@ export const generateValidationsFromExcel = (
   let fileContent = `// AUTO-GENERATED FILE — DO NOT EDIT
 // This file contains validation rules for all models
 
+import { z } from 'zod';
+
 `;
 
   models.forEach((model) => {
     const className = capitalize(model.tableName);
     const validationObject = generateValidationObject(model.fields);
-    fileContent += `export const ${className}Validation = ${JSON.stringify(
-      validationObject,
-      null,
-      2
-    )};\n\n`;
+    const entries = Object.entries(validationObject)
+      .map(([key, value]) => `  ${key}: ${value}`)
+      .join(",\n");
+
+    fileContent += `export const ${className}Validation = z.object({\n${entries}\n});\n\n`;
   });
 
   const filePath = path.join(validationsDir, "index.ts");
