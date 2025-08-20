@@ -149,7 +149,7 @@ export const parseExcelFile = async (
       const comments = rowData["comments"]?.toString().trim() || undefined;
       let enumValues: string[] | undefined;
       let defaultValue = rowData["default_value"] || undefined;
-
+      
       // Enum mapping from comments
       if (comments && comments.includes("=>")) {
         const mapping: Record<string, string> = {};

@@ -11,7 +11,6 @@ export const generateLoginSystem = async () => {
     for (const folder of folders) {
       await fs.ensureDir(path.join(BASE_PATH, folder));
     }
-
     // 1. config/db.ts
     await fs.writeFile(
       path.join(BASE_PATH, "config", "db.ts"),

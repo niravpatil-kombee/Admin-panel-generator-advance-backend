@@ -1,70 +1,19 @@
 import fs from "fs";
 import path from "path";
 import { logSuccess } from "./backendGeneratorLogs";
-import { ParsedField, ParsedModel } from "./excelParser";
+import { ParsedModel } from "./excelParser";
 
 const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
 
-const parseValidationToZod = (field: ParsedField) => {
-  let zodChain = "";
-
-  // Base type
-  switch (field.type) {
-    case "string":
-      zodChain = "z.string()";
-      break;
-    case "number":
-      zodChain = "z.number()";
-      break;
-    case "boolean":
-      zodChain = "z.boolean()";
-      break;
-    case "Date":
-      zodChain = `z.string().transform(val => new Date(val))`;
-      break;
-    default:
-      zodChain = "z.any()";
-  }
-
-  // Validation rules from Excel
-  if (field.validation) {
-    const rules = String(field.validation)
-      .split("|")
-      .map((r) => r.trim());
-
-    rules.forEach((rule) => {
-      if (rule === "required") {
-        if (field.type === "string") {
-          zodChain += `.min(1, { message: "${field.name} is required" })`;
-        } else {
-          zodChain += `.refine(val => val !== undefined && val !== null, { message: "${field.name} is required" })`;
-        }
-      }
-      if (rule.startsWith("max:") && field.type === "string") {
-        const val = parseInt(rule.split(":")[1], 10);
-        zodChain += `.max(${val}, { message: "${field.name} must be at most ${val}" })`;
-      }
-      if (rule.startsWith("min:") && field.type === "string") {
-        const val = parseInt(rule.split(":")[1], 10);
-        zodChain += `.min(${val}, { message: "${field.name} must be at least ${val}" })`;
-      }
-      // mimes handled separately (multer), skip here
-    });
-  }
-
-  return zodChain;
-};
-
 const generateControllerFile = (outputDir: string, model: ParsedModel) => {
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
   const className = capitalize(model.tableName);
   const varName = className;
   const hasFileField = model.fields.some((f) =>
     (f.ui || "").toLowerCase().includes("file")
   );
+  const stringFields = model.fields.filter((f) => f.type === "string");
 
   const imports = [
     `import { Request, Response } from 'express';`,
@@ -78,9 +27,8 @@ const generateControllerFile = (outputDir: string, model: ParsedModel) => {
     imports.push(`import fs from 'fs';`);
   }
 
-  let uploadCode = "";
-  if (hasFileField) {
-    uploadCode = `
+  const uploadCode = hasFileField
+    ? `
 const uploadDir = path.join(__dirname, '../../uploads/${className}');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -88,18 +36,15 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
-
 export const ${className}Upload = multer({ storage });
-    `;
-  }
+  `
+    : "";
 
-  const stringFields = model.fields.filter((f) => f.type === "string");
-
-  const content = `
+  const controller = `
 ${imports.join("\n")}
 ${uploadCode}
 
-// Helper: get all schema unique fields
+// Helper: Get unique fields
 const getUniqueFields = () =>
   Object.keys(${varName}.schema.paths).filter(
     key => ${varName}.schema.paths[key].options?.unique
@@ -112,17 +57,17 @@ export const create${className} = async (req: Request, res: Response) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, errors: parsed.error.format() });
     }
-    const payload = parsed.data;
+    const payload = parsed.data as Record<string, any>;
+
     ${
       hasFileField
         ? `if (req.file) payload.filePath = '/uploads/${className}/' + req.file.filename;`
         : ""
     }
 
-    // Unique check
     for (const field of getUniqueFields()) {
-      if (payload[field]) {
-        const value = String(payload[field]).trim().toLowerCase();
+      if (payload[field as keyof typeof payload]) {
+        const value = String(payload[field as keyof typeof payload]).trim().toLowerCase();
         const exists = await ${varName}.findOne({ [field]: { $regex: \`^\${value}$\`, $options: 'i' } });
         if (exists) {
           return res.status(400).json({ success: false, message: \`\${field} already exists\` });
@@ -138,14 +83,16 @@ export const create${className} = async (req: Request, res: Response) => {
   }
 };
 
-// Read (list with search, sort, pagination)
+// List
 export const get${className}s = async (req: Request, res: Response) => {
   try {
     const { page = 1, limit = 10, sortBy = '_id', order = 'asc', search } = req.query;
     const query: any = {};
+
     ${
       stringFields.length
-        ? `if (search) {
+        ? `
+    if (search) {
       query.$or = [
         ${stringFields
           .map((f) => `{ ${f.name}: { $regex: search, $options: 'i' } }`)
@@ -154,6 +101,7 @@ export const get${className}s = async (req: Request, res: Response) => {
     }`
         : ""
     }
+
     const docs = await ${varName}
       .find(query)
       .sort({ [sortBy as string]: order === 'desc' ? -1 : 1 })
@@ -167,7 +115,7 @@ export const get${className}s = async (req: Request, res: Response) => {
   }
 };
 
-// Read (single)
+// Get by ID
 export const get${className}ById = async (req: Request, res: Response) => {
   try {
     const doc = await ${varName}.findById(req.params.id);
@@ -185,7 +133,8 @@ export const update${className} = async (req: Request, res: Response) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, errors: parsed.error.format() });
     }
-    const payload = parsed.data;
+
+    const payload = parsed.data as Record<string, any>;
 
     ${
       hasFileField
@@ -208,10 +157,9 @@ export const update${className} = async (req: Request, res: Response) => {
 
     const existingDocObj = existingDoc.toObject() as Record<string, any>;
 
-    // Unique check for updated values
     for (const field of getUniqueFields()) {
-      if (payload[field]) {
-        const newValue = String(payload[field]).trim().toLowerCase();
+      if (payload[field as keyof typeof payload]) {
+        const newValue = String(payload[field as keyof typeof payload]).trim().toLowerCase();
         const oldValue = String(existingDocObj[field] ?? "").trim().toLowerCase();
         if (newValue !== oldValue) {
           const duplicate = await ${varName}.findOne({ [field]: { $regex: \`^\${newValue}$\`, $options: 'i' } });
@@ -222,12 +170,7 @@ export const update${className} = async (req: Request, res: Response) => {
       }
     }
 
-    const updatedDoc = await ${varName}.findByIdAndUpdate(
-      req.params.id,
-      payload,
-      { new: true, runValidators: true }
-    );
-
+    const updatedDoc = await ${varName}.findByIdAndUpdate(req.params.id, payload, { new: true, runValidators: true });
     res.status(200).json({ success: true, data: updatedDoc });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
@@ -239,6 +182,7 @@ export const delete${className} = async (req: Request, res: Response) => {
   try {
     const doc = await ${varName}.findByIdAndDelete(req.params.id);
     if (!doc) return res.status(404).json({ success: false, message: '${className} not found' });
+
     ${
       hasFileField
         ? `
@@ -248,6 +192,7 @@ export const delete${className} = async (req: Request, res: Response) => {
     }`
         : ""
     }
+
     res.status(200).json({ success: true, message: '${className} deleted' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -256,7 +201,7 @@ export const delete${className} = async (req: Request, res: Response) => {
 `;
 
   const filePath = path.join(outputDir, `${className}.controller.ts`);
-  fs.writeFileSync(filePath, content.trim());
+  fs.writeFileSync(filePath, controller.trim());
   logSuccess(`✅ Controller generated: ${filePath}`);
 };
 
@@ -270,5 +215,6 @@ export const generateControllersFromExcel = (
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
+
   models.forEach((model) => generateControllerFile(outputDir, model));
 };
