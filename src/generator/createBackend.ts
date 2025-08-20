@@ -35,7 +35,8 @@ const files = {
     "multer": "^2.0.2",
     "path": "^0.12.7",
     "zod": "^3.22.4",
-    "json2csv": "^6.0.0-alpha.2"
+    "json2csv": "^6.0.0-alpha.2",
+    "fast-csv": "^4.3.6"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -64,9 +65,12 @@ EMAIL_PASSWORD=lhyoezzwbjjevbbn`,
     "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "typeRoots": ["./node_modules/@types", "./src/types"]
-  }
-}`,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+`,
 };
 
 // server.ts content inside /src

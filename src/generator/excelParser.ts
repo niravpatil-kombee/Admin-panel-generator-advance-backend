@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import { logError, logTest } from "./backendGeneratorLogs";
+import fs from "fs";
+import path from "path";
 
 // ------------------ Interfaces ------------------
 export interface ParsedField {
@@ -24,6 +26,7 @@ export interface ParsedField {
   comments?: string;
   enumValues?: string[];
   zodValidation?: string;
+  exportable: boolean;
 }
 
 export interface ParsedModel {
@@ -56,12 +59,10 @@ const sqlToMongooseType = (
 const mapValidationRulesToZod = (field: ParsedField): string => {
   let zodChain = "";
 
-  // Enum check
   if (Array.isArray(field.enumValues) && field.enumValues.length) {
     return `z.enum([${field.enumValues.map((v) => `'${v}'`).join(", ")}])`;
   }
 
-  // ObjectId check
   if (field.isForeign || field.type === "ObjectId") {
     zodChain = `z.string().regex(/^[0-9a-fA-F]{24}$/, { message: 'Invalid ObjectId' })`;
   } else {
@@ -73,21 +74,19 @@ const mapValidationRulesToZod = (field: ParsedField): string => {
         zodChain = "z.boolean()";
         break;
       case "Date":
-        zodChain = `z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' })`;
+        zodChain = `z.preprocess(val => (typeof val === "string" ? new Date(val) : val), z.date())`;
         break;
       default:
         zodChain = "z.string()";
     }
   }
 
-  // Add Laravel-style validations
   const rulesStr =
     typeof field.validation === "string"
       ? field.validation
       : String(field.validation || "");
   rulesStr.split("|").forEach((rule) => {
     rule = rule.trim();
-
     if (rule === "required") {
       zodChain += ".nonempty({ message: 'Required' })";
     } else if (rule.startsWith("max:")) {
@@ -102,7 +101,7 @@ const mapValidationRulesToZod = (field: ParsedField): string => {
         types
       )}.some(t => file.type.includes(t)), { message: 'Invalid file type' })`;
     } else if (rule.startsWith("date_format:")) {
-      // already handled as Date string above
+      // already handled
     } else if (rule.startsWith("in:")) {
       const values = rule
         .split(":")[1]
@@ -149,8 +148,7 @@ export const parseExcelFile = async (
       const comments = rowData["comments"]?.toString().trim() || undefined;
       let enumValues: string[] | undefined;
       let defaultValue = rowData["default_value"] || undefined;
-      
-      // Enum mapping from comments
+
       if (comments && comments.includes("=>")) {
         const mapping: Record<string, string> = {};
         comments.split(",").forEach((part: string) => {
@@ -165,7 +163,6 @@ export const parseExcelFile = async (
         }
       }
 
-      // Enum from column
       if (!enumValues && rowData["enum_values"]) {
         enumValues = rowData["enum_values"]
           .toString()
@@ -178,7 +175,6 @@ export const parseExcelFile = async (
         ? String(rowData["validation_rule"]).trim()
         : undefined;
 
-      // Construct field
       const field: ParsedField = {
         name: rowData["column"],
         type: fieldType,
@@ -206,10 +202,10 @@ export const parseExcelFile = async (
         faker: rowData["faker_value"] || undefined,
         comments,
         enumValues,
-        zodValidation: "", // placeholder
+        zodValidation: "",
+        exportable: rowData["exportable"]?.toString().toLowerCase() === "y", // <-- NEW
       };
 
-      // Assign Zod validation
       field.zodValidation = mapValidationRulesToZod(field);
 
       fields.push(field);
@@ -220,6 +216,12 @@ export const parseExcelFile = async (
       models.push({ tableName, fields });
     }
   }
+
+  const schemaPath = path.join(__dirname, "../../generated-backend/schema.json");
+  if (!fs.existsSync(path.dirname(schemaPath))) {
+    fs.mkdirSync(path.dirname(schemaPath), { recursive: true });
+  }
+  fs.writeFileSync(schemaPath, JSON.stringify(models, null, 2));
 
   return models;
 };

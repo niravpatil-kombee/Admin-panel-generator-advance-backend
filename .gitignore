@@ -40,3 +40,4 @@ Thumbs.db
 *.tmp
 
 uploads
+generated-backend

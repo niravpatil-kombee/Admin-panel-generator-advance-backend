@@ -11,6 +11,8 @@ import { generateControllersFromExcel } from "./generator/generateController";
 import { generateModelsFromExcel } from "./generator/generateModel"; // now also generates Zod validations
 import { generateRoutesFromExcel } from "./generator/generateRoutes";
 import { upload } from "./middleware/uploads";
+import { generateUniversalExport } from "./generator/generateExport";
+
 
 dotenv.config();
 const app = express();
@@ -59,6 +61,9 @@ app.post(
 
       // Step 5: Generate routes
       await generateRoutesFromExcel("", models);
+
+      // Step 6: Generate export feature
+      await generateUniversalExport(models);
 
       // Step 6 (optional): Display generated validation files in console
       loadGeneratedValidations();
