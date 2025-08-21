@@ -2,21 +2,21 @@ import fs from "fs";
 import path from "path";
 
 export const generateUniversalExport = async (models: any[]) => {
-    const controllersDir = path.join(__dirname,
-        "../../generated-backend/src/controllers");
-    const routesDir = path.join(__dirname,
-        "../../generated-backend/src/routes");
-    const utilsDir = path.join(__dirname,
-        "../../generated-backend/src/utils");
+  const controllersDir = path.join(__dirname,
+    "../../generated-backend/src/controllers");
+  const routesDir = path.join(__dirname,
+    "../../generated-backend/src/routes");
+  const utilsDir = path.join(__dirname,
+    "../../generated-backend/src/utils");
 
-    // Ensure dirs exist
-    [controllersDir, routesDir, utilsDir].forEach((dir) => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    });
+  // Ensure dirs exist
+  [controllersDir, routesDir, utilsDir].forEach((dir) => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  });
 
-    // --- Create exportUtils.ts ---
-    const exportUtilsPath = path.join(utilsDir, "exportUtils.ts");
-    const utilsContent = `
+  // --- Create exportUtils.ts ---
+  const exportUtilsPath = path.join(utilsDir, "exportUtils.ts");
+  const utilsContent = `
     import fs from "fs";
     import path from "path";
 
@@ -53,72 +53,102 @@ export const generateUniversalExport = async (models: any[]) => {
       return model.fields.map((f: any) => f.name);
     };
   `;
-    fs.writeFileSync(exportUtilsPath, utilsContent.trim());
+  fs.writeFileSync(exportUtilsPath, utilsContent.trim());
 
-    // --- Create export.controller.ts ---
-    const controllerPath = path.join(controllersDir, "export.controller.ts");
+  // --- Create export.controller.ts ---
+  const controllerPath = path.join(controllersDir, "export.controller.ts");
 
-    const modelImports = models
-        .map(
-            (m) =>
-                `import { ${m.tableName} } from "../models/${m.tableName}.model";`
-        )
-        .join("\n");
+  const modelImports = models
+    .map(
+      (m) =>
+        `import { ${m.tableName} } from "../models/${m.tableName}.model";`
+    )
+    .join("\n");
 
-    const modelRegistry = models
-        .map((m) => `  ${m.tableName},`)
-        .join("\n");
+  const modelRegistry = models.map((m) => `  ${m.tableName},`).join("\n");
 
-    const controllerContent = `
+  const controllerContent = `
     import { Request, Response } from "express";
     import { Parser } from "json2csv";
     import { getExportableFields } from "../utils/exportUtils";
-
+    
     ${modelImports}
-
+    
     const models: Record<string, any> = {
     ${modelRegistry}
     };
-
+    
+    // 🔧 Helper to format dates
+    function formatDate(value: any): string {
+      if (!value) return "";
+      const date = new Date(value);
+      if (isNaN(date.getTime())) return String(value);
+      return date.toISOString().split("T")[0]; // YYYY-MM-DD
+    }
+    
     export const exportData = async (req: Request, res: Response) => {
       try {
-        const { model, selectedIds, filters } = req.body;
-
+        const { model, selectedIds } = req.body;
+        const filters = req.body.filters || req.body.filter || {};
+    
         if (!model || !models[model]) {
           return res.status(400).json({ message: "Invalid or missing model name" });
         }
-
+    
         const Model = models[model];
-
+    
         let query: any = {};
         if (selectedIds && selectedIds.length > 0) {
           query._id = { $in: selectedIds };
         } else if (filters && Object.keys(filters).length > 0) {
           query = { ...filters };
         }
-
+    
         const data = await Model.find(query).lean();
         if (!data || data.length === 0) {
           return res.status(404).json({ message: "No data found to export" });
         }
-
+    
         // 🔎 DEBUG: log exportable fields
-        const exportableFields = getExportableFields(model);
+        let exportableFields = getExportableFields(model);
         console.log("📌 Exporting fields:", exportableFields);
-
+    
         if (!exportableFields || exportableFields.length === 0) {
-          return res.status(400).json({ message: \`No exportable fields for \${model}\` });
+          return res
+            .status(400)
+            .json({ message: \`No exportable fields for \${model}\` });
         }
+    
+        // Always include "id" field mapped from "_id"
+        if (!exportableFields.includes("id")) {
+          exportableFields = ["id", ...exportableFields];
+        }
+    
+const filteredData = data.map((row: any) => {
+  const formatted: any = { id: row._id?.toString() };  // ✅ always take Mongo _id
 
-        const filteredData = data.map((row: any) =>
-          Object.fromEntries(
-            Object.entries(row).filter(([key]) => exportableFields.includes(key))
-          )
-        );
+  for (const key of exportableFields) {
+    if (key === "id") continue;  // skip because we already mapped _id → id
 
+    let value = row[key];
+    // Format Date fields
+    if (
+      value instanceof Date ||
+      key.toLowerCase().includes("date") ||
+      key.toLowerCase().includes("dob")
+    ) {
+      value = formatDate(value);
+    }
+
+    formatted[key] = value ?? "";
+  }
+
+  return formatted;
+});
+    
         const parser = new Parser({ fields: exportableFields });
         const csv = parser.parse(filteredData);
-
+    
         res.header("Content-Type", "text/csv");
         res.attachment(\`\${model.toLowerCase()}_export.csv\`);
         return res.send(csv);
@@ -127,12 +157,15 @@ export const generateUniversalExport = async (models: any[]) => {
         res.status(500).json({ message: "Error exporting data", error: err });
       }
     };
-  `;
-    fs.writeFileSync(controllerPath, controllerContent.trim());
+    `;
 
-    // --- Create export.routes.ts ---
-    const routePath = path.join(routesDir, "export.routes.ts");
-    const routeContent = `
+  fs.writeFileSync(controllerPath, controllerContent.trim());
+
+
+
+  // --- Create export.routes.ts ---
+  const routePath = path.join(routesDir, "export.routes.ts");
+  const routeContent = `
     import { Router } from "express";
     import { exportData } from "../controllers/export.controller";
 
@@ -143,7 +176,7 @@ export const generateUniversalExport = async (models: any[]) => {
 
     export default router;
   `;
-    fs.writeFileSync(routePath, routeContent.trim());
+  fs.writeFileSync(routePath, routeContent.trim());
 
-    console.log("✅ Universal export controller, route, and utils generated successfully!");
+  console.log("✅ Universal export controller, route, and utils generated successfully!");
 };
