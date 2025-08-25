@@ -24,7 +24,7 @@ const files = {
   "type": "commonjs",
   "main": "src/server.ts",
   "scripts": {
-    "dev": "ts-node-dev --respawn src/server.ts"
+    "dev": "ts-node-dev --respawn -r dotenv/config -r newrelic src/server.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -36,7 +36,11 @@ const files = {
     "path": "^0.12.7",
     "zod": "^3.22.4",
     "json2csv": "^6.0.0-alpha.2",
-    "fast-csv": "^4.3.6"
+    "fast-csv": "^4.3.6",
+    "winston": "^3.13.0",
+    "morgan": "^1.10.0",
+    "@newrelic/winston-enricher": "^4.0.0",
+    "newrelic": "^11.16.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -44,6 +48,7 @@ const files = {
     "@types/multer": "^2.0.0",
     "@types/node": "^24.2.0",
     "@types/json2csv": "^5.0.7",
+    "@types/morgan": "^1.9.9",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.2"
   }
@@ -55,7 +60,11 @@ MONGO_URI=mongodb://localhost:27017/authSystem
 JWT_SECRET=R@h6%4$uL90$
 JWT_REFRESH=R$y%to09&*bGt
 EMAIL=onoffcollection503@gmail.com
-EMAIL_PASSWORD=lhyoezzwbjjevbbn`,
+EMAIL_PASSWORD=lhyoezzwbjjevbbn
+NEW_RELIC_LICENSE_KEY="ece8c3ee6cf67a08883e80921b552c8aFFFFNRAL"
+NEW_RELIC_APP_NAME="MyNewApp"
+LOG_LEVEL="http"
+`,
   "tsconfig.json": `{
   "compilerOptions": {
     "target": "ES6",
@@ -76,6 +85,7 @@ EMAIL_PASSWORD=lhyoezzwbjjevbbn`,
 // server.ts content inside /src
 const serverFile = {
   "server.ts": `// src/server.ts
+import 'newrelic';
 
 import express from 'express';
 import path from "path";
@@ -83,6 +93,8 @@ import fs from "fs";
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import cors from 'cors';
+import morganMiddleware from './utils/logging.middleware';
+import logger from './utils/logger';
 
 dotenv.config();
 
@@ -95,6 +107,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(morganMiddleware);
 
 // ✅ Load all route files dynamically
 const routesPath = path.join(__dirname, "./routes");
@@ -106,6 +119,13 @@ fs.readdirSync(routesPath).forEach((file) => {
       console.log(\`✅ Route loaded: \${file}\`);
     }
   }
+});
+
+//demo api to call
+app.get('/health', (req, res) => {
+  // 3. Example of using the logger for custom logs
+  logger.info('Health check endpoint was called successfully.');
+  res.status(200).send('OK');
 });
 
 // ✅ Connect to MongoDB

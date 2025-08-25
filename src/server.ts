@@ -12,6 +12,7 @@ import { generateModelsFromExcel } from "./generator/generateModel"; // now also
 import { generateRoutesFromExcel } from "./generator/generateRoutes";
 import { upload } from "./middleware/uploads";
 import { generateUniversalExport } from "./generator/generateExport";
+import { generateLogManagement } from "./generator/logManagment";
 
 
 dotenv.config();
@@ -64,6 +65,9 @@ app.post(
 
       // Step 6: Generate export feature
       await generateUniversalExport(models);
+
+      // Step 7: Generate log files
+      await generateLogManagement();
 
       // Step 6 (optional): Display generated validation files in console
       loadGeneratedValidations();
