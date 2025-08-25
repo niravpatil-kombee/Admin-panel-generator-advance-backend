@@ -74,32 +74,60 @@ export default logger;
  */
 const generateMiddlewareFile = () => {
   const content = `
-import morgan, { StreamOptions } from 'morgan';
-import logger from './logger';
+import { Request, Response, NextFunction } from "express";
+import logger from "./logger";
 
-// Create a stream object with a 'write' function that will be used by morgan
-const stream: StreamOptions = {
-  // Use the 'http' log level so we can easily filter request logs
-  write: (message) => logger.http(message.trim()),
-};
+export function requestLogger(req: Request, res: Response, next: NextFunction) {
+  const start = Date.now();
 
-// Morgan format string.
-// :remote-addr - The remote IP address.
-// :method - The HTTP method of the request.
-// :url - The URL of the request.
-// :status - The HTTP status code of the response.
-// :response-time - The time taken to respond, in milliseconds.
-const morganFormat = ':remote-addr - :method :url :status - :response-time ms';
+  const oldSend = res.send;
+  let responseBody: any;
 
-/**
- * Morgan HTTP request logging middleware.
- * It streams all API request logs to our Winston logger.
- */
-const morganMiddleware = morgan(morganFormat, { stream });
+  // capture response body
+  res.send = function (body?: any): Response {
+    responseBody = body;
+    return oldSend.apply(res, arguments as any);
+  };
 
-export default morganMiddleware;
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+
+    // Format request/response as pretty JSON
+    const formatJSON = (obj: any) => {
+      try {
+        if (typeof obj === "string") {
+          return JSON.stringify(JSON.parse(obj), null, 2); // prettify JSON string
+        }
+        return JSON.stringify(obj, null, 2); // prettify objects/arrays
+      } catch {
+        return obj; // fallback if not JSON
+      }
+    };
+
+    const message = \`\${req.method} \${req.originalUrl} \${res.statusCode} \${duration}ms\`;
+
+    logger.http(message, {
+      request: {
+        headers: req.headers,
+        body: formatJSON(req.body),
+        query: req.query,
+        params: req.params,
+      },
+      response: {
+        status: res.statusCode,
+        body: formatJSON(responseBody),
+      },
+      meta: {
+        duration,
+        ip: req.ip,
+      },
+    });
+  });
+
+  next();
+}
 `;
-  const filePath = path.join(UTILS_PATH, "logging.middleware.ts");
+  const filePath = path.join(UTILS_PATH, "requestLogger.ts");
   fs.writeFileSync(filePath, content.trim());
   logSuccess(`✅ Logging middleware generated: ${filePath}`);
 };

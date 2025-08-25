@@ -93,7 +93,7 @@ import fs from "fs";
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import morganMiddleware from './utils/logging.middleware';
+import  {requestLogger}  from "./utils/requestLogger";
 import logger from './utils/logger';
 
 dotenv.config();
@@ -107,7 +107,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
-app.use(morganMiddleware);
+app.use(requestLogger);
 
 // ✅ Load all route files dynamically
 const routesPath = path.join(__dirname, "./routes");
